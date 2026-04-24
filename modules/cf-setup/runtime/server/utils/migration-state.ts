@@ -78,7 +78,13 @@ export async function probeDatabaseState(
 }
 
 export async function resolveState(): Promise<StateSnapshot> {
-  if (cache && (cache.state === 'migrated' || cache.state === 'bootstrap' || cache.state === 'pending')) {
+  // Only 'migrated' is a stable terminal state — once we observe it, no
+  // subsequent request in this isolate needs to re-probe. Bootstrap and
+  // pending are transient: a different isolate (or this one via the
+  // /api/_migrate/run endpoint) may have completed the work out from
+  // under our cache, so we must re-probe on every request until we see
+  // migrated ourselves.
+  if (cache && cache.state === 'migrated') {
     return cache
   }
   const snapshot = await probeDatabaseState(resolveConnectionString())
