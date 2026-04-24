@@ -49,18 +49,26 @@ export async function probeDatabaseState(
   const client = postgres(connectionString, { max: 1, prepare: false })
   const db = drizzle(client)
   try {
-    const trackerRows = (await db.execute(
-      sql`SELECT to_regclass('drizzle.__drizzle_migrations') IS NOT NULL AS exists`,
-    )) as unknown as Array<{ exists: boolean }>
-    const trackerExists = !!trackerRows[0]?.exists
-    if (!trackerExists) {
+    // Hyperdrive caches SELECT queries keyed on the query text; right after
+    // migrations run, the tracker count would be served stale and /setup
+    // would loop. Wrap the probe in a transaction — Hyperdrive does not
+    // cache queries inside transactions.
+    const snapshot = await db.transaction(async (tx) => {
+      const trackerRows = (await tx.execute(
+        sql`SELECT to_regclass('drizzle.__drizzle_migrations') IS NOT NULL AS exists`,
+      )) as unknown as Array<{ exists: boolean }>
+      const trackerExists = !!trackerRows[0]?.exists
+      if (!trackerExists) return { trackerExists: false as const, applied: 0 }
+
+      const countRows = (await tx.execute(
+        sql`SELECT COUNT(*)::int AS n FROM drizzle.__drizzle_migrations`,
+      )) as unknown as Array<{ n: number }>
+      return { trackerExists: true as const, applied: countRows[0]?.n ?? 0 }
+    })
+    if (!snapshot.trackerExists) {
       return { state: 'bootstrap', expected, applied: 0 }
     }
-
-    const countRows = (await db.execute(
-      sql`SELECT COUNT(*)::int AS n FROM drizzle.__drizzle_migrations`,
-    )) as unknown as Array<{ n: number }>
-    const applied = countRows[0]?.n ?? 0
+    const applied = snapshot.applied
 
     if (applied === 0) return { state: 'bootstrap', expected, applied }
     if (applied < expected) return { state: 'pending', expected, applied }
