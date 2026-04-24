@@ -1,0 +1,42 @@
+name = "feedlog-deploy-test"
+main = "./.output/server/index.mjs"
+# 2026-01-20+ auto-enables node:fs and adds built-in .sql text rule.
+compatibility_date = "2026-01-20"
+compatibility_flags = ["nodejs_compat"]
+
+# Pull every .sql file and the migrations journal under base_dir
+# (= the directory of `main`, i.e. ./.output/server/) into the deployed
+# Worker as bundle modules. Combined with node:fs, this exposes them under
+# /bundle/... at runtime so Drizzle's migrate({ migrationsFolder }) can
+# read them natively. .sql has a built-in Text rule since 2026-01-20, but
+# _journal.json needs an explicit rule.
+find_additional_modules = true
+
+[[rules]]
+type = "Text"
+globs = ["**/_journal.json"]
+fallthrough = true
+
+# Hyperdrive pools + caches Postgres connections at the edge — required for
+# Workers since they can't hold long-lived TCP pools of their own.
+#
+# The Deploy Button flow walks the user through creating a Hyperdrive config
+# against their own Postgres (e.g. Neon) and binds the generated id here.
+# Runtime code reads `env.POSTGRES.connectionString` — there is no separate
+# DATABASE_URL secret to configure.
+[[hyperdrive]]
+binding = "POSTGRES"
+id = "156890e730614ae7853095059356b489"
+
+# Secrets (BETTER_AUTH_SECRET, SYSTEM_ADMIN_EMAILS, optional OAuth/Resend keys)
+# are NOT declared here — putting them under [vars] would persist them as
+# plaintext in the user's forked repository. They live in .dev.vars.example
+# instead, which the Deploy Button surfaces as masked "secret" inputs and
+# uploads as Worker Secrets (encrypted, never written back to the fork).
+
+[assets]
+directory = "./.output/public/"
+binding = "ASSETS"
+
+[observability]
+enabled = true
